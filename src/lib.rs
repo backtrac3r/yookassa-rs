@@ -9,8 +9,6 @@ use uuid::Uuid;
 const YOOKASSA_API_BASE_URL: &str = "https://api.yookassa.ru/v3/";
 const IDEMPOTENCE_KEY_HEADER: &str = "Idempotence-Key";
 
-// --- Ошибки ---
-
 #[derive(Error, Debug)]
 pub enum YooKassaError {
     #[error("Ошибка сети или HTTP запроса: {0}")]
