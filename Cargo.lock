@@ -1738,7 +1738,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "youkassa-rs"
+name = "yookassa-rs"
 version = "0.1.0"
 dependencies = [
  "reqwest",
