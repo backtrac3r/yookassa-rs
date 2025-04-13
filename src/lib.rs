@@ -1,38 +1,13 @@
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
-use reqwest::{Client as ReqwestClient, Method, Response, StatusCode};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::{Client as ReqwestClient, Method, Response};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use thiserror::Error;
 use uuid::Uuid;
 
-// --- Константы ---
+pub type YooKassaError = Box<dyn std::error::Error + Send + Sync>;
+
 const YOOKASSA_API_BASE_URL: &str = "https://api.yookassa.ru/v3/";
 const IDEMPOTENCE_KEY_HEADER: &str = "Idempotence-Key";
-
-#[derive(Error, Debug)]
-pub enum YooKassaError {
-    #[error("Ошибка сети или HTTP запроса: {0}")]
-    Reqwest(#[from] reqwest::Error),
-
-    #[error("Ошибка сериализации/десериализации JSON: {0}")]
-    Serde(#[from] serde_json::Error),
-
-    #[error("Ошибка API YooKassa (Статус: {status}): {message}")]
-    ApiError {
-        status: StatusCode,
-        message: String,
-        error_details: Option<YooKassaApiError>, // Детали ошибки от API
-    },
-
-    #[error("Неверный URL: {0}")]
-    UrlParse(#[from] url::ParseError),
-
-    #[error("Неверное значение заголовка: {0}")]
-    InvalidHeaderValue(#[from] reqwest::header::InvalidHeaderValue),
-
-    #[error("Отсутствует обязательное поле в ответе: {0}")]
-    MissingField(String),
-}
 
 // Структура для парсинга тела ошибки от API YooKassa (если оно есть)
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -44,10 +19,7 @@ pub struct YooKassaApiError {
     pub description: String, // Описание ошибки для разработчика
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameter: Option<String>, // Параметр, вызвавший ошибку
-                             // Могут быть и другие поля, в зависимости от ошибки
 }
-
-// --- Модели данных (Запросы и Ответы) ---
 
 // Сумма
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -385,31 +357,23 @@ pub struct YooKassaClient {
 }
 
 impl YooKassaClient {
-    /// Создает новый клиент YooKassa API.
-    ///
-    /// # Arguments
-    ///
-    /// * `shop_id` - Идентификатор вашего магазина.
-    /// * `secret_key` - Секретный ключ вашего магазина.
     pub fn new(shop_id: String, secret_key: String) -> Self {
         YooKassaClient {
             client: ReqwestClient::builder()
-                .timeout(Duration::from_secs(30)) // Таймаут по умолчанию
+                .timeout(Duration::from_secs(30))
                 .build()
-                .expect("Не удалось создать HTTP клиент"), // Паника здесь допустима при инициализации
+                .expect("Не удалось создать HTTP клиент"),
             shop_id,
             secret_key,
             base_url: YOOKASSA_API_BASE_URL.to_string(),
         }
     }
 
-    /// Устанавливает кастомный базовый URL (для тестирования или прокси).
     pub fn set_base_url(mut self, base_url: String) -> Self {
         self.base_url = base_url;
         self
     }
 
-    // Внутренний метод для отправки запросов
     async fn send_request<T: Serialize>(
         &self,
         method: Method,
@@ -422,7 +386,6 @@ impl YooKassaClient {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json")); // Явно указываем, что ждем JSON
 
-        // Генерируем ключ идемпотентности, если он нужен
         if idempotency_key_required {
             let idempotency_key = Uuid::new_v4().to_string();
             headers.insert(
@@ -439,48 +402,30 @@ impl YooKassaClient {
 
         if let Some(payload) = body {
             request_builder = request_builder.json(payload);
-            // println!("Request Body: {}", serde_json::to_string_pretty(&payload).unwrap_or_default()); // Для отладки
         }
 
         let response = request_builder.send().await?;
-        // println!("Response Status: {}", response.status()); // Для отладки
 
         Ok(response)
     }
 
-    // Внутренний метод для обработки ответа и парсинга JSON
     async fn process_response<R: for<'de> Deserialize<'de>>(
         &self,
         response: Response,
     ) -> Result<R, YooKassaError> {
         let status = response.status();
         if status.is_success() {
-            // println!("Response Body (Raw): {}", response.text().await?); // Для отладки
-            // Необходимо клонировать response, чтобы можно было прочитать тело дважды
-            // let text_body = response.text().await?;
-            // println!("Response Body: {}", text_body);
-            // serde_json::from_str(&text_body).map_err(YooKassaError::Serde)
-            response.json::<R>().await.map_err(YooKassaError::Reqwest) // Используем Reqwest ошибку для JSON парсинга ответа
+            Ok(response.json::<R>().await?)
         } else {
             let body_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Не удалось прочитать тело ответа".to_string());
-            // Пытаемся распарсить как ошибку API
             let api_error_details: Option<YooKassaApiError> = serde_json::from_str(&body_text).ok();
-            Err(YooKassaError::ApiError {
-                status,
-                message: body_text,
-                error_details: api_error_details,
-            })
+            Err("err".into())
         }
     }
 
-    /// Создает новый платеж.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Данные для создания платежа.
     pub async fn create_payment(
         &self,
         request: &CreatePaymentRequest,
@@ -496,11 +441,6 @@ impl YooKassaClient {
         self.process_response(response).await
     }
 
-    /// Получает информацию о конкретном платеже.
-    ///
-    /// # Arguments
-    ///
-    /// * `payment_id` - Идентификатор платежа.
     pub async fn get_payment(&self, payment_id: &str) -> Result<Payment, YooKassaError> {
         let endpoint = format!("payments/{}", payment_id);
         let response = self.send_request::<()>( // Тип тела не важен для GET
@@ -512,20 +452,12 @@ impl YooKassaClient {
         self.process_response(response).await
     }
 
-    /// Подтверждает (списывает) платеж, находящийся в статусе `waiting_for_capture`.
-    ///
-    /// # Arguments
-    ///
-    /// * `payment_id` - Идентификатор платежа.
-    /// * `request` - Опциональные данные для подтверждения (например, сумма для частичного списания).
-    ///              Если None, подтверждается вся сумма.
     pub async fn capture_payment(
         &self,
         payment_id: &str,
         request: Option<&CapturePaymentRequest>,
     ) -> Result<Payment, YooKassaError> {
         let endpoint = format!("payments/{}/capture", payment_id);
-        // YooKassa ожидает пустой JSON объект {}, если request is None
         let default_body = CapturePaymentRequest::default();
         let body_to_send = request.unwrap_or(&default_body);
 
@@ -540,32 +472,15 @@ impl YooKassaClient {
         self.process_response(response).await
     }
 
-    /// Отменяет платеж, находящийся в статусе `waiting_for_capture`.
-    ///
-    /// # Arguments
-    ///
-    /// * `payment_id` - Идентификатор платежа.
     pub async fn cancel_payment(&self, payment_id: &str) -> Result<Payment, YooKassaError> {
-        let endpoint = format!("payments/{}/cancel", payment_id);
-        // API ожидает пустой JSON объект {} в теле запроса
+        let endpoint = format!("payments/{payment_id}/cancel");
         let empty_body: serde_json::Value = serde_json::json!({});
         let response = self
-            .send_request(
-                Method::POST,
-                &endpoint,
-                Some(&empty_body),
-                true, // Требуется ключ идемпотентности
-            )
+            .send_request(Method::POST, &endpoint, Some(&empty_body), true)
             .await?;
         self.process_response(response).await
     }
 
-    /// Получает список платежей с возможностью фильтрации и пагинации.
-    ///
-    /// # Arguments
-    ///
-    /// * `params` - Опциональные параметры для фильтрации и пагинации (например, `limit`, `status`, `created_at_gte`, `cursor`).
-    ///            Пример: `&[("limit", "10"), ("status", "succeeded")]`
     pub async fn list_payments(
         &self,
         params: Option<&[(&str, &str)]>,
