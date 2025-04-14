@@ -22,7 +22,7 @@ pub struct YooKassaApiError {
 }
 
 // Сумма
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Amount {
     pub value: String,    // Сумма в виде строки (например, "100.00")
     pub currency: String, // Код валюты (например, "RUB")
@@ -67,7 +67,7 @@ pub struct CardData {
 }
 
 // Запрос на создание платежа
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct CreatePaymentRequest {
     pub amount: Amount,
     #[serde(skip_serializing_if = "Option::is_none")]
